@@ -1,0 +1,15 @@
+{
+  "name": "workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Persistent repo workbench for coding sessions.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.9.0"
+  }
+}

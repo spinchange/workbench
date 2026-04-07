@@ -1,0 +1,5 @@
+node_modules/
+dist/
+tmp-*.log
+proof-round-output.json
+proof-round.config.json

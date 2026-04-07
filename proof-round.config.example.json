@@ -1,0 +1,10 @@
+{
+  "repos": [
+    "C:\\path\\to\\package-repo",
+    "C:\\path\\to\\git-only-repo",
+    "C:\\path\\to\\important-repo"
+  ],
+  "investigationRepo": "C:\\path\\to\\package-repo",
+  "investigationSearch": "package:nsis",
+  "outputPath": "C:\\path\\to\\workbench\\proof-round-output.json"
+}
