@@ -6,10 +6,11 @@ import { ShellTool, unavailableShellRunner } from "../tools/shell-tool.js";
 import { WorkbenchSession } from "../runtime/session.js";
 import { loadBootstrap } from "../bootstrap/load-bootstrap.js";
 import { loadHostShellRunner } from "../host/load-host-runner.js";
+import { listProofRounds } from "../proof/list-proof-rounds.js";
 import { runProofRound } from "../proof/run-proof-round.js";
 
 async function main(): Promise<void> {
-  const { repoPath, evalInput, hostModulePath, proofOptions } = parseArgs(process.argv.slice(2));
+  const { repoPath, evalInput, hostModulePath, proofOptions, proofListRequested, proofListDir } = parseArgs(process.argv.slice(2));
   const registry = new ToolRegistry();
   const shellRunner = hostModulePath
     ? await loadHostShellRunner(hostModulePath)
@@ -27,6 +28,12 @@ async function main(): Promise<void> {
     await (session.globals.setRepo as (repoPath: string) => Promise<unknown>)(repoPath);
   }
   await loadBootstrap(session, session.state.repo);
+
+  if (proofListRequested) {
+    const summaries = await listProofRounds(proofListDir);
+    printResult(summaries);
+    return;
+  }
 
   if (proofOptions) {
     const artifact = await runProofRound(session, proofOptions);
@@ -94,6 +101,8 @@ function parseArgs(args: string[]): {
   repoPath?: string;
   evalInput?: string;
   hostModulePath?: string;
+  proofListRequested?: boolean;
+  proofListDir?: string;
   proofOptions?: {
     repoPath: string;
     outputPath?: string;
@@ -103,6 +112,8 @@ function parseArgs(args: string[]): {
   let repoPath: string | undefined;
   let evalInput: string | undefined;
   let hostModulePath: string | undefined;
+  let proofListRequested = false;
+  let proofListDir: string | undefined;
   let proofOptions: { repoPath: string; outputPath?: string; searchPattern?: string } | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -118,6 +129,17 @@ function parseArgs(args: string[]): {
       continue;
     }
     if (arg === "proof") {
+      if (args[index + 1] === "list") {
+        proofListRequested = true;
+        for (let proofIndex = index + 2; proofIndex < args.length; proofIndex += 1) {
+          const proofArg = args[proofIndex];
+          if (proofArg === "--dir") {
+            proofListDir = args[proofIndex + 1];
+            proofIndex += 1;
+          }
+        }
+        break;
+      }
       const nextProofOptions: { repoPath?: string; outputPath?: string; searchPattern?: string } = {};
       for (let proofIndex = index + 1; proofIndex < args.length; proofIndex += 1) {
         const proofArg = args[proofIndex];
@@ -153,5 +175,5 @@ function parseArgs(args: string[]): {
     }
   }
 
-  return { repoPath, evalInput, hostModulePath, proofOptions };
+  return { repoPath, evalInput, hostModulePath, proofListRequested, proofListDir, proofOptions };
 }

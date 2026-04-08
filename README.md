@@ -52,6 +52,7 @@ await testOrExplain();
 ```text
 workbench
 workbench --repo C:\path\to\repo
+workbench proof list
 workbench eval "await repoAudit()"
 workbench --host .\dist\host\node-child-process-runner.js proof --repo C:\path\to\repo
 workbench sessions save my-session
@@ -91,6 +92,8 @@ The artifact includes:
 - overall status
 
 By default, the artifact is written outside the target repo under `~/.workbench/proof-rounds/` so the proof round does not dirty the repo it is inspecting. You can still pass `--output` explicitly when you want the file somewhere else.
+
+Use `workbench proof list` to summarize the artifacts already written under `~/.workbench/proof-rounds/`.
 
 ## Runtime Globals
 
