@@ -6,9 +6,10 @@ import { ShellTool, unavailableShellRunner } from "../tools/shell-tool.js";
 import { WorkbenchSession } from "../runtime/session.js";
 import { loadBootstrap } from "../bootstrap/load-bootstrap.js";
 import { loadHostShellRunner } from "../host/load-host-runner.js";
+import { runProofRound } from "../proof/run-proof-round.js";
 
 async function main(): Promise<void> {
-  const { repoPath, evalInput, hostModulePath } = parseArgs(process.argv.slice(2));
+  const { repoPath, evalInput, hostModulePath, proofOptions } = parseArgs(process.argv.slice(2));
   const registry = new ToolRegistry();
   const shellRunner = hostModulePath
     ? await loadHostShellRunner(hostModulePath)
@@ -26,6 +27,12 @@ async function main(): Promise<void> {
     await (session.globals.setRepo as (repoPath: string) => Promise<unknown>)(repoPath);
   }
   await loadBootstrap(session, session.state.repo);
+
+  if (proofOptions) {
+    const artifact = await runProofRound(session, proofOptions);
+    printResult(artifact);
+    return;
+  }
 
   if (evalInput) {
     const result = await session.evaluator.evaluate(evalInput);
@@ -83,10 +90,20 @@ function printResult(result: unknown): void {
   console.dir(result, { depth: 6, colors: true });
 }
 
-function parseArgs(args: string[]): { repoPath?: string; evalInput?: string; hostModulePath?: string } {
+function parseArgs(args: string[]): {
+  repoPath?: string;
+  evalInput?: string;
+  hostModulePath?: string;
+  proofOptions?: {
+    repoPath: string;
+    outputPath?: string;
+    searchPattern?: string;
+  };
+} {
   let repoPath: string | undefined;
   let evalInput: string | undefined;
   let hostModulePath: string | undefined;
+  let proofOptions: { repoPath: string; outputPath?: string; searchPattern?: string } | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -100,11 +117,41 @@ function parseArgs(args: string[]): { repoPath?: string; evalInput?: string; hos
       index += 1;
       continue;
     }
+    if (arg === "proof") {
+      const nextProofOptions: { repoPath?: string; outputPath?: string; searchPattern?: string } = {};
+      for (let proofIndex = index + 1; proofIndex < args.length; proofIndex += 1) {
+        const proofArg = args[proofIndex];
+        if (proofArg === "--repo") {
+          nextProofOptions.repoPath = args[proofIndex + 1];
+          proofIndex += 1;
+          continue;
+        }
+        if (proofArg === "--output") {
+          nextProofOptions.outputPath = args[proofIndex + 1];
+          proofIndex += 1;
+          continue;
+        }
+        if (proofArg === "--search") {
+          nextProofOptions.searchPattern = args[proofIndex + 1];
+          proofIndex += 1;
+          continue;
+        }
+      }
+      if (!nextProofOptions.repoPath) {
+        throw new Error("proof requires --repo <path>");
+      }
+      proofOptions = {
+        repoPath: nextProofOptions.repoPath,
+        outputPath: nextProofOptions.outputPath,
+        searchPattern: nextProofOptions.searchPattern,
+      };
+      break;
+    }
     if (arg === "eval") {
       evalInput = args.slice(index + 1).join(" ");
       break;
     }
   }
 
-  return { repoPath, evalInput, hostModulePath };
+  return { repoPath, evalInput, hostModulePath, proofOptions };
 }

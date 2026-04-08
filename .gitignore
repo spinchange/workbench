@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.workbench/
 tmp-*.log
+tmp-proof-round-output.json
 proof-round-output.json
 proof-round.config.json

@@ -6,7 +6,8 @@
   "description": "Persistent repo workbench for coding sessions.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run check"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

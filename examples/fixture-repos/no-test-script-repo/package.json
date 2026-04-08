@@ -1,0 +1,9 @@
+{
+  "name": "no-test-script-repo",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "check": "node -e \"console.log('no test script fixture check')\""
+  }
+}

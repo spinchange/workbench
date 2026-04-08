@@ -1,10 +1,8 @@
 {
   "repos": [
-    "C:\\path\\to\\package-repo",
-    "C:\\path\\to\\git-only-repo",
-    "C:\\path\\to\\important-repo"
+    "C:\\path\\to\\workbench\\examples\\fixture-repos\\clean-node-repo"
   ],
-  "investigationRepo": "C:\\path\\to\\package-repo",
-  "investigationSearch": "package:nsis",
+  "investigationRepo": "C:\\path\\to\\workbench\\examples\\fixture-repos\\clean-node-repo",
+  "investigationSearch": "fixture",
   "outputPath": "C:\\path\\to\\workbench\\proof-round-output.json"
 }

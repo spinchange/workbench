@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $workbenchRoot = Split-Path -Parent $scriptDir
 $hostScript = Join-Path $workbenchRoot "scripts\workbench_shell_host.py"
+$nodeHostModule = Join-Path $workbenchRoot "dist\host\node-child-process-runner.js"
 $hostModule = Join-Path $workbenchRoot "src\host\http-shell-host.mjs"
 $outLog = Join-Path $workbenchRoot "tmp-proof-host.out.log"
 $errLog = Join-Path $workbenchRoot "tmp-proof-host.err.log"
@@ -59,12 +60,26 @@ Set-Location -LiteralPath $workbenchRoot
 
 function Start-HostServer {
     Remove-Item -LiteralPath $outLog, $errLog -ErrorAction SilentlyContinue
-    $proc = Start-Process python -ArgumentList @(
-        "-u",
-        $hostScript,
-        "--token",
-        $Token
-    ) -RedirectStandardOutput $outLog -RedirectStandardError $errLog -WindowStyle Hidden -PassThru
+    $pythonLaunchers = @(
+        [PSCustomObject]@{ FilePath = "python"; Arguments = @("-u", $hostScript, "--token", $Token) },
+        [PSCustomObject]@{ FilePath = "py"; Arguments = @("-3", "-u", $hostScript, "--token", $Token) }
+    )
+
+    $proc = $null
+    $launchErrors = @()
+    foreach ($launcher in $pythonLaunchers) {
+        try {
+            $proc = Start-Process $launcher.FilePath -ArgumentList $launcher.Arguments `
+                -RedirectStandardOutput $outLog -RedirectStandardError $errLog -WindowStyle Hidden -PassThru
+            break
+        } catch {
+            $launchErrors += "$($launcher.FilePath): $($_.Exception.Message)"
+        }
+    }
+
+    if ($null -eq $proc) {
+        throw "Could not start the host server. Launch attempts failed:`n$($launchErrors -join "`n")"
+    }
 
     $headers = @{ "x-workbench-token" = $Token }
     for ($i = 0; $i -lt 20; $i++) {
@@ -105,57 +120,76 @@ function Invoke-WorkbenchEval {
     node .\dist\cli\main.js --host $hostModule --repo $Repo eval $Expression
 }
 
-function Invoke-PersistentInvestigation {
+function Get-ActiveHostModule {
+    $pythonCommand = Get-Command python, py -ErrorAction SilentlyContinue |
+        Where-Object {
+            $source = [string]$_.Source
+            -not [string]::IsNullOrWhiteSpace($source) -and
+            $source -notlike "*\WindowsApps\python.exe"
+        } |
+        Select-Object -First 1
+    if ($null -ne $pythonCommand) {
+        return $hostModule
+    }
+
+    if (Test-Path -LiteralPath $nodeHostModule) {
+        return $nodeHostModule
+    }
+
+    throw "No usable host module is available. Python launchers were not found, and $nodeHostModule does not exist."
+}
+
+function Invoke-WorkbenchProof {
+    param(
+        [string]$Repo,
+        [string]$Search,
+        [string]$OutputFile
+    )
+
     $env:WORKBENCH_HOST_TOKEN = $Token
     $env:WORKBENCH_HOST_URL = $HostUrl
 
-    $escapedRepo = ($InvestigationRepo -replace "\\", "/")
-    $escapedPackageJson = ((Join-Path $InvestigationRepo "package.json") -replace "\\", "/")
-    $searchRoot = ($InvestigationRepo -replace "\\", "/")
-    @"
-import { ToolRegistry } from "./dist/tools/registry.js";
-import { ShellTool } from "./dist/tools/shell-tool.js";
-import { WorkbenchSession } from "./dist/runtime/session.js";
-import { loadHostShellRunner } from "./dist/host/load-host-runner.js";
+    $args = @(
+        ".\dist\cli\main.js",
+        "--host",
+        (Get-ActiveHostModule),
+        "proof",
+        "--repo",
+        $Repo,
+        "--output",
+        $OutputFile
+    )
 
-const registry = new ToolRegistry();
-const shellRunner = await loadHostShellRunner("./src/host/http-shell-host.mjs");
-registry.register("shell", new ShellTool(shellRunner));
+    if (-not [string]::IsNullOrWhiteSpace($Search)) {
+        $args += @("--search", $Search)
+    }
 
-const session = new WorkbenchSession(process.cwd(), registry);
-await session.initialize();
-
-const repoPath = ${([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($escapedRepo) | ForEach-Object { "'$_'" })};
-const packageJsonPath = ${([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($escapedPackageJson) | ForEach-Object { "'$_'" })};
-const searchTerm = ${([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($InvestigationSearch) | ForEach-Object { "'$_'" })};
-
-await session.evaluator.evaluate(`await setRepo(${JSON.stringify(repoPath)})`);
-let scripts = JSON.stringify({ scripts: [] }, null, 2);
-try {
-  await session.evaluator.evaluate(`globalThis.pkg = await json(${JSON.stringify(packageJsonPath)})`);
-  scripts = await session.evaluator.evaluate(`JSON.stringify({ scripts: Object.keys(pkg.scripts || {}) }, null, 2)`);
-} catch (error) {
-  scripts = JSON.stringify({ scripts: [], packageJsonError: error?.message ?? String(error) }, null, 2);
-}
-await session.evaluator.evaluate(`globalThis.searchHits = await findText(${JSON.stringify($InvestigationSearch)}, ${JSON.stringify($escapedRepo)})`);
-const searchHits = await session.evaluator.evaluate(`JSON.stringify({ hitCount: searchHits.split(/\\r?\\n/).filter(Boolean).length, searchHits }, null, 2)`);
-console.log(JSON.stringify({ repoPath, scripts, searchTerm, searchHits }, null, 2));
-"@ | node --input-type=module
+    node @args | Out-Null
+    return Get-Content -LiteralPath $OutputFile -Raw | ConvertFrom-Json
 }
 
 npm run build | Out-Null
 
 $hostProcess = $null
 try {
-    $hostProcess = Start-HostServer
+    $activeHostModule = Get-ActiveHostModule
+    if ($activeHostModule -eq $hostModule) {
+        $hostProcess = Start-HostServer
+    }
+
+    $proofDir = Join-Path $env:USERPROFILE ".workbench\proof-rounds"
+    New-Item -ItemType Directory -Force -Path $proofDir | Out-Null
 
     $crossRepo = @{}
     foreach ($repo in $Repos) {
         $name = Split-Path $repo -Leaf
-        $crossRepo[$name] = [PSCustomObject]@{
-            repoAudit = (Invoke-WorkbenchEval -Repo $repo -Expression "JSON.stringify(await repoAudit(), null, 2)") -join "`n"
-            testOrExplain = (Invoke-WorkbenchEval -Repo $repo -Expression "JSON.stringify(await testOrExplain(), null, 2)") -join "`n"
+        $safeName = (($name -replace '[^A-Za-z0-9._-]', '_').Trim('_'))
+        if ([string]::IsNullOrWhiteSpace($safeName)) {
+            $safeName = "repo"
         }
+        $proofFile = Join-Path $proofDir "$safeName.proof.json"
+        $search = if ($repo -eq $InvestigationRepo) { $InvestigationSearch } else { "" }
+        $crossRepo[$name] = Invoke-WorkbenchProof -Repo $repo -Search $search -OutputFile $proofFile
     }
 
     $payload = [PSCustomObject]@{
@@ -163,7 +197,6 @@ try {
         hostUrl = $HostUrl
         repos = $Repos
         crossRepo = $crossRepo
-        persistentInvestigation = (Invoke-PersistentInvestigation) -join "`n"
     }
 
     $payload | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding utf8
