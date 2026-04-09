@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WorkbenchSession } from "../runtime/session.js";
-import type { ShellArgs, ShellData, ToolResult, WorkspaceInfo } from "../types/index.js";
+import type { FsArgs, FsData, ShellArgs, ShellData, ToolResult, WorkspaceInfo } from "../types/index.js";
 
 type ProofStepStatus = "ok" | "warn" | "fail" | "skipped";
 type ProofOverallStatus = "pass" | "warn" | "fail";
@@ -106,12 +106,7 @@ export async function runProofRound(
   steps.push(bootstrapStep.step);
 
   const rootListingStep = await recordStep("root_listing", async () => {
-    const entries = await readdir(repoPath, { withFileTypes: true });
-    const listing = entries
-      .map((entry) => ({
-        name: entry.name,
-        type: entry.isDirectory() ? "dir" : entry.isFile() ? "file" : "other",
-      }))
+    const listing = (await listDirectory(session, repoPath))
       .filter((entry) => !ignoredRepoRelativePaths.has(entry.name))
       .sort((left, right) => left.name.localeCompare(right.name));
     return {
@@ -141,7 +136,7 @@ export async function runProofRound(
 
     for (const candidate of candidates) {
       try {
-        const text = await readFile(candidate, "utf8");
+        const text = await readText(session, candidate);
         discovered.push({
           path: candidate,
           excerpt: text.split(/\r?\n/).slice(0, 8).join("\n"),
@@ -287,8 +282,8 @@ export async function runProofRound(
   };
 
   if (resolvedOutputPath) {
-    await mkdir(path.dirname(resolvedOutputPath), { recursive: true });
-    await writeFile(resolvedOutputPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+    await ensureDirectory(session, path.dirname(resolvedOutputPath));
+    await writeText(session, resolvedOutputPath, `${JSON.stringify(artifact, null, 2)}\n`);
   }
 
   return artifact;
@@ -319,6 +314,70 @@ async function recordShellStep(
     timeoutMs,
   });
   return { result };
+}
+
+async function listDirectory(
+  session: WorkbenchSession,
+  target: string,
+): Promise<Array<{ name: string; type: "dir" | "file" | "other" }>> {
+  const result = await tryFs(session, { op: "listDir", path: target });
+  if (result) {
+    return expectFsData(result, "listDir").entries;
+  }
+
+  const entries = await readdir(target, { withFileTypes: true });
+  return entries.map((entry) => ({
+    name: entry.name,
+    type: entry.isDirectory() ? "dir" : entry.isFile() ? "file" : "other",
+  }));
+}
+
+async function readText(session: WorkbenchSession, target: string): Promise<string> {
+  const result = await tryFs(session, { op: "readText", path: target });
+  if (result) {
+    return expectFsData(result, "readText").text;
+  }
+
+  return readFile(target, "utf8");
+}
+
+async function ensureDirectory(session: WorkbenchSession, target: string): Promise<void> {
+  const result = await tryFs(session, { op: "mkdir", path: target, recursive: true });
+  if (result) {
+    expectFsData(result, "mkdir");
+    return;
+  }
+
+  await mkdir(target, { recursive: true });
+}
+
+async function writeText(session: WorkbenchSession, target: string, contents: string): Promise<void> {
+  const result = await tryFs(session, { op: "writeText", path: target, contents });
+  if (result) {
+    expectFsData(result, "writeText");
+    return;
+  }
+
+  await writeFile(target, contents, "utf8");
+}
+
+async function tryFs(session: WorkbenchSession, args: FsArgs): Promise<ToolResult<FsData> | undefined> {
+  const result = await session.getToolRegistry().execute<FsArgs, FsData>("fs", args);
+  if (!result.ok && result.error?.code === "tool_not_found") {
+    return undefined;
+  }
+  return result;
+}
+
+function expectFsData<TExpected extends FsData["op"]>(
+  result: ToolResult<FsData>,
+  expectedOp: TExpected,
+): Extract<FsData, { op: TExpected }> {
+  if (!result.ok || !result.data || result.data.op !== expectedOp) {
+    throw new Error(result.error?.message ?? `fs ${expectedOp} failed`);
+  }
+
+  return result.data as Extract<FsData, { op: TExpected }>;
 }
 
 async function recordStep(

@@ -6,8 +6,9 @@
   "description": "Persistent repo workbench for coding sessions.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run check"
+    "test": "npm run check && npm run build:test && node --test dist-test/tests/audit-log.test.js dist-test/tests/bootstrap.test.js dist-test/tests/proof-round.test.js dist-test/tests/runtime-globals.test.js dist-test/tests/session-persistence.test.js dist-test/tests/shell-tool.test.js"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

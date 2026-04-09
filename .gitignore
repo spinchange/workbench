@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-test/
 .workbench/
 tmp-*.log
 tmp-proof-round-output.json

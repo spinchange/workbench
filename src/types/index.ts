@@ -19,10 +19,86 @@ export interface ToolResult<TData = unknown> {
   };
 }
 
+export interface ToolAuditEntry {
+  at: string;
+  tool: ToolName;
+  args: unknown;
+  ok: boolean;
+  durationMs?: number;
+  error?: ToolError;
+  result?: unknown;
+}
+
+export type ToolAuditLogger = (entry: ToolAuditEntry) => void | Promise<void>;
+
+export interface FsEntry {
+  name: string;
+  type: "dir" | "file" | "other";
+}
+
+export type FsArgs =
+  | {
+      op: "exists";
+      path: string;
+    }
+  | {
+      op: "readText";
+      path: string;
+    }
+  | {
+      op: "readJson";
+      path: string;
+    }
+  | {
+      op: "listDir";
+      path: string;
+    }
+  | {
+      op: "mkdir";
+      path: string;
+      recursive?: boolean;
+    }
+  | {
+      op: "writeText";
+      path: string;
+      contents: string;
+    };
+
+export type FsData =
+  | {
+      op: "exists";
+      path: string;
+      exists: boolean;
+    }
+  | {
+      op: "readText";
+      path: string;
+      text: string;
+    }
+  | {
+      op: "readJson";
+      path: string;
+      value: unknown;
+    }
+  | {
+      op: "listDir";
+      path: string;
+      entries: FsEntry[];
+    }
+  | {
+      op: "mkdir";
+      path: string;
+    }
+  | {
+      op: "writeText";
+      path: string;
+    };
+
 export interface ShellArgs {
   command: string;
   cwd?: string;
   timeoutMs?: number;
+  allowDestructive?: boolean;
 }
 
 export interface ShellData {
@@ -53,4 +129,11 @@ export interface SessionState {
   loadedBootstraps: string[];
   history: string[];
   globals: Record<string, unknown>;
+}
+
+export interface SessionSnapshot {
+  version: 1;
+  cwd: string;
+  repo?: string;
+  history: string[];
 }
