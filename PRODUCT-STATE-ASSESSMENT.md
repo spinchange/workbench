@@ -10,6 +10,8 @@ The repo supports a credible loop:
 - save and reload the session
 - emit proof artifacts
 - inspect an execution audit trail
+- confirm or reject risky actions explicitly
+- switch among saved repo names
 
 That is enough to justify product development, not just exploratory engineering.
 
@@ -18,17 +20,18 @@ That is enough to justify product development, not just exploratory engineering.
 - The core runtime exists and preserves state during a session.
 - Sessions can now be saved and loaded by name.
 - The tool seam is typed and auditable.
-- Workspace detection and repo helpers are already useful.
+- Risky commands now have an explicit confirmation path instead of only hard failure.
+- Workspace detection, repo registration, and project-relative helpers are already useful.
 - The proof command produces bounded artifacts instead of ad hoc logs.
 - The terminal surface now has the start of a real command language through slash commands and focused CLI subcommands.
-- The repo has real automated tests across runtime behavior, proof flow, persistence, audit logging, and shell policy.
+- The repo has real automated tests across runtime behavior, proof flow, persistence, audit logging, shell policy, repo registry, and user-visible render output.
 
 ## What Is Still Thin
 
-- Safety is better, but still policy-light. The shell guard is stronger, yet still fundamentally lexical.
+- Safety is better, but still policy-light. The shell guard now has confirmation semantics, yet it is still fundamentally command-classifier based.
 - The UI is functional rather than distinctive. The terminal experience is more coherent, but not yet polished enough to feel great.
-- The product boundary is still narrow. Repo registry, multi-repo workflows, and richer project navigation do not exist yet.
-- Rendering is improved, not finished. There is still no deliberate presentation layer or golden coverage for user-facing output.
+- The product boundary is still narrow. Multi-repo workflows and richer project navigation are still thin even though repo registration now exists.
+- Rendering is improved and now tested, but the presentation layer is still small and text-only.
 
 ## Founder Read
 
@@ -42,16 +45,16 @@ The strongest wedge is still:
 
 - durable repo investigation with repeatable artifacts, recoverable sessions, and host-mediated execution you can inspect
 
-That is a real wedge. It is much stronger now because Workbench can persist a session, show audit evidence, and expose a small command surface instead of only raw evaluation.
+That is a real wedge. It is much stronger now because Workbench can persist a session, show audit evidence, confirm risky actions explicitly, and expose a small command surface instead of only raw evaluation.
 
 ## Recommendation
 
 The next phase should optimize for trust, clarity, and product sharpness, in this order:
 
-1. add stronger confirmation and policy layers
+1. deepen the trust model beyond command classification
 2. improve the terminal surface and output quality deliberately
-3. add repo registry and project-relative navigation
-4. only then widen toward multi-repo and plugin expansion
+3. expand repo navigation from single saved names to real multi-repo workflows
+4. only then widen toward plugin expansion
 
 ## Bottom Line
 

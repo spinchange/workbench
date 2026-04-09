@@ -1,6 +1,6 @@
 # Implementation Checklist
 
-This checklist reflects the repo as it exists after the current four-slice implementation pass.
+This checklist reflects the repo as it exists after the confirmation/repo-registry follow-up slice.
 
 ## Shipped In Repo
 
@@ -22,43 +22,37 @@ This checklist reflects the repo as it exists after the current four-slice imple
 - [x] Repo-local bootstrap loading
 - [x] Named session save/load and history persistence
 - [x] Minimal structured output rendering for session and audit flows
+- [x] Dedicated CLI render helpers with golden-style output tests
 - [x] Slash commands in the REPL
 - [x] Audit log for tool calls
-- [x] Minimal shell execution policy with explicit destructive opt-out
+- [x] Shell policy with `safe` / `confirm` / `blocked` classification
+- [x] Interactive confirmation retry for confirmable commands
+- [x] Repo registry
+- [x] Project-relative path helpers
 - [x] Node-based test harness
 - [x] Runtime globals tests
 - [x] Bootstrap tests
 - [x] Session persistence tests
 - [x] Audit log tests
+- [x] Repo registry tests
+- [x] CLI render golden tests
 - [x] Fixture-backed proof-round pass and degraded-path tests
 - [x] Expanded fixture repos
 
 ## Still Missing
 
-- [ ] Repo registry
-- [ ] Project-relative path helpers
-- [ ] Confirmation prompts for risky actions instead of only non-interactive blocking
 - [ ] Multi-repo awareness
 - [ ] Plugin API for globals and tools
 - [ ] TUI polish
-- [ ] Golden tests for user-visible rendering
 - [ ] End-to-end coverage for session restore through the CLI surface
+- [ ] End-to-end coverage for interactive confirmation through the CLI surface
 
 ## Remaining Quality Gaps
 
 - [ ] Add timeout-specific behavior coverage instead of only generic shell failure coverage
 - [ ] Add invalid-workdir coverage if the runtime grows explicit workdir validation
-- [ ] Decide whether the shell policy should remain lexical or move to a fuller policy model
+- [ ] Decide whether the shell policy should remain command-classifier based or move to a fuller policy model
 - [ ] Reconcile README examples and CLI help text if the command surface expands again
-
-## Recommended Next Slice
-
-The highest-value next work is now post-v0.1 product hardening:
-
-- [ ] Add confirmation and policy layers on top of the current shell guard
-- [ ] Add repo registry and project-relative helpers
-- [ ] Add golden tests for CLI and REPL-facing output
-- [ ] Strengthen session restore and audit flows with end-to-end coverage
 
 ## Test Matrix
 
@@ -101,3 +95,12 @@ The highest-value next work is now post-v0.1 product hardening:
 
 - [x] audit log file write
 - [x] audit log readback
+- [x] policy and confirmation state in audit entries
+
+### CLI Rendering
+
+- [x] slash help output
+- [x] audit line rendering
+- [x] session save/load rendering
+- [x] repo entry rendering
+- [x] cancelled confirmation rendering

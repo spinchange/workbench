@@ -11,13 +11,15 @@ It is not trying to be a full IDE. The current product shape is:
 - repeatable session bootstrap files
 - proof-round artifacts that make an investigation auditable
 - named session snapshots
-- terminal commands for audit inspection and session management
+- explicit confirmation for risky shell commands
+- repo registry and project-relative helpers
+- terminal commands for audit inspection, session management, and repo navigation
 
 The important architectural constraint is that Workbench does not spawn child processes directly. Shell execution is a host capability. The runtime consumes a host-provided shell runner instead of binding itself to `child_process`.
 
 ## Current State
 
-The repo now has a complete first product slice:
+The repo now has a complete first product slice plus the first trust/navigation follow-up:
 
 - CLI entrypoint and REPL loop
 - persistent in-process session state for globals and history during a run
@@ -28,17 +30,18 @@ The repo now has a complete first product slice:
 - `workbench proof` artifact generation
 - `workbench proof list` summaries
 - tool-boundary audit logging
+- shell policy with `safe`, `confirm`, and `blocked` decisions
+- interactive confirmation retry for confirmable risky shell commands
+- repo registry via `workbench repos` and `/save-repo`
 - REPL slash commands and improved CLI result rendering
-- Node-based automated tests for runtime globals, bootstrap loading, proof flow, persistence, audit logging, and shell policy
+- Node-based automated tests for runtime globals, bootstrap loading, proof flow, persistence, audit logging, shell policy, repo registry, and CLI rendering
 
 Still missing from the broader vision:
 
-- repo registry
-- project-relative path helpers
 - multi-repo awareness
 - plugin API for globals and tools
 - TUI polish
-- stronger confirmation policy beyond the current non-interactive shell guard
+- stronger policy semantics beyond the current command classifier and confirmation token flow
 
 ## Product Shape
 
@@ -49,7 +52,7 @@ Workbench has five layers:
 2. `tools`
    Typed capabilities exposed to the runtime such as shell, fs, git, http, and project inspection.
 3. `workspace`
-   Repo detection, package-manager detection, path resolution, and project metadata.
+   Repo detection, registry, path resolution, and project metadata.
 4. `bootstrap`
    User-global and repo-local startup files that register helpers and defaults.
 5. `ui`
@@ -65,6 +68,8 @@ workbench proof --repo C:\path\to\repo
 workbench proof list
 workbench sessions save my-session
 workbench sessions load my-session
+workbench repos list
+workbench repos add my-repo C:\path\to\repo
 workbench audit --limit 20
 ```
 
@@ -75,7 +80,9 @@ The REPL now supports slash commands in addition to plain JavaScript:
 - `/help`
 - `/globals`
 - `/session`
-- `/repo <path>`
+- `/repos`
+- `/repo <path-or-name>`
+- `/save-repo <name> [path]`
 - `/save <name>`
 - `/load <name>`
 - `/audit [limit]`
@@ -111,6 +118,8 @@ Current built-in globals:
 - `repo`
 - `setRepo()`
 - `run()`
+- `runConfirmed()`
+- `confirmationToken()`
 - `read()`
 - `json()`
 - `ls()`
@@ -118,6 +127,9 @@ Current built-in globals:
 - `head()`
 - `tail()`
 - `findText()`
+- `registerRepo()`
+- `listRepos()`
+- `projectPath()`
 - `git()`
 - `gitStatus()`
 - `npmScript()`
@@ -140,6 +152,7 @@ export interface ShellArgs {
   cwd?: string;
   timeoutMs?: number;
   allowDestructive?: boolean;
+  confirmationToken?: string;
 }
 
 export interface ShellData {
@@ -152,7 +165,7 @@ export interface ShellData {
 export type HostShellRunner = (args: ShellArgs) => Promise<ShellData>;
 ```
 
-Workbench applies a best-effort non-interactive policy before invoking the host runner. It blocks obvious destructive commands, risky pipe-to-shell flows, and dynamic evaluation commands unless `allowDestructive: true` is set explicitly.
+Workbench applies a best-effort command policy before invoking the host runner. Commands are classified as `safe`, `confirm`, or `blocked`. Confirmable commands require both `allowDestructive: true` and a matching `confirmationToken`.
 
 ## Audit Log
 
@@ -167,6 +180,28 @@ workbench audit --limit 20
 ```
 
 In a standalone build without a host shell runner, failed shell attempts still appear in the audit log, which makes the execution policy visible rather than silent.
+
+Audit entries now include policy and confirmation state when relevant, for example:
+
+```text
+2026-04-09T08:14:27.476Z shell error:confirmation_required policy:confirm confirmed:no {"command":"git reset --hard","cwd":"C:\\dev\\repos\\workbench","timeoutMs":20000}
+```
+
+## Repo Registry
+
+Registered repos are stored under:
+
+- `~/.workbench/repos.json`
+
+Current helpers and commands:
+
+- `workbench repos list`
+- `workbench repos add <name> <path>`
+- `/repos`
+- `/save-repo <name> [path]`
+- `registerRepo(name, repoPath?)`
+- `listRepos()`
+- `projectPath(...segments)`
 
 ## Session Persistence
 
@@ -193,10 +228,11 @@ This runs:
 - main TypeScript typecheck
 - a separate TypeScript compile for `tests/`
 - emitted `node:test` files from `dist-test/tests/`
+- exact-string render coverage for the CLI help and terminal output surface
 
 ## Product Notes
 
-The proof loop remains the clearest wedge, but the project now has enough persistence, policy, auditability, and terminal surface area to feel like a real product candidate rather than just a proof harness.
+The proof loop remains the clearest wedge, but the project now has enough persistence, policy, auditability, navigation, and terminal surface area to feel like a real product candidate rather than just a proof harness.
 
 If the product is going to win, it still needs to become excellent at a narrow job:
 
