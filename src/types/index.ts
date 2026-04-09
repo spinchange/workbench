@@ -8,6 +8,7 @@ export interface ToolCall<TArgs = unknown> {
 export interface ToolError {
   code: string;
   message: string;
+  details?: Record<string, unknown>;
 }
 
 export interface ToolResult<TData = unknown> {
@@ -16,8 +17,13 @@ export interface ToolResult<TData = unknown> {
   error?: ToolError;
   meta?: {
     durationMs?: number;
+    policyDecision?: ShellPolicyDecision;
+    policyReason?: string;
+    confirmationSatisfied?: boolean;
   };
 }
+
+export type ShellPolicyDecision = "safe" | "confirm" | "blocked";
 
 export interface ToolAuditEntry {
   at: string;
@@ -27,6 +33,9 @@ export interface ToolAuditEntry {
   durationMs?: number;
   error?: ToolError;
   result?: unknown;
+  policyDecision?: ShellPolicyDecision;
+  policyReason?: string;
+  confirmationSatisfied?: boolean;
 }
 
 export type ToolAuditLogger = (entry: ToolAuditEntry) => void | Promise<void>;
@@ -99,6 +108,7 @@ export interface ShellArgs {
   cwd?: string;
   timeoutMs?: number;
   allowDestructive?: boolean;
+  confirmationToken?: string;
 }
 
 export interface ShellData {

@@ -11,7 +11,9 @@ import { listProofRounds } from "../proof/list-proof-rounds.js";
 import { runProofRound } from "../proof/run-proof-round.js";
 import { loadSessionSnapshot, saveSessionSnapshot } from "../runtime/session-store.js";
 import { createFileAuditLogger, readAuditLog } from "../tools/audit-log.js";
-import type { ToolAuditEntry } from "../types/index.js";
+import { createShellConfirmationToken } from "../tools/shell-tool.js";
+import { listRegisteredRepos, resolveRegisteredRepo, saveRegisteredRepo } from "../workspace/repo-registry.js";
+import type { ToolAuditEntry, ToolError } from "../types/index.js";
 
 async function main(): Promise<void> {
   const {
@@ -23,6 +25,7 @@ async function main(): Promise<void> {
     proofListDir,
     sessionCommand,
     auditCommand,
+    reposCommand,
   } = parseArgs(process.argv.slice(2));
   const registry = new ToolRegistry();
   registry.setAuditLogger(createFileAuditLogger());
@@ -41,6 +44,18 @@ async function main(): Promise<void> {
   await session.initialize();
   if (repoPath) {
     await (session.globals.setRepo as (repoPath: string) => Promise<unknown>)(repoPath);
+  }
+
+  if (reposCommand) {
+    if (reposCommand.action === "list") {
+      printResult(await listRegisteredRepos());
+      return;
+    }
+    if (reposCommand.action === "add") {
+      const entry = await saveRegisteredRepo(reposCommand.name, reposCommand.path);
+      printResult(entry);
+      return;
+    }
   }
 
   if (sessionCommand?.action === "load") {
@@ -96,8 +111,18 @@ async function main(): Promise<void> {
   }
 
   if (evalInput) {
-    const result = await session.evaluator.evaluate(evalInput);
-    printResult(result);
+    try {
+      const result = await session.evaluator.evaluate(evalInput);
+      printResult(result);
+    } catch (error) {
+      const retry = await maybeConfirmAndRetryCommand(session, error);
+      if (typeof retry !== "undefined") {
+        printResult(retry);
+      } else {
+        const message = error instanceof Error ? error.stack ?? error.message : String(error);
+        console.error(message);
+      }
+    }
     return;
   }
 
@@ -139,6 +164,11 @@ async function runRepl(session: WorkbenchSession): Promise<void> {
         const result = await session.evaluator.evaluate(line);
         printResult(result);
       } catch (error) {
+        const retry = await maybeConfirmAndRetryCommand(session, error);
+        if (typeof retry !== "undefined") {
+          printResult(retry);
+          continue;
+        }
         const message = error instanceof Error ? error.stack ?? error.message : String(error);
         console.error(message);
       }
@@ -146,6 +176,45 @@ async function runRepl(session: WorkbenchSession): Promise<void> {
   } finally {
     rl.close();
   }
+}
+
+async function maybeConfirmAndRetryCommand(session: WorkbenchSession, error: unknown): Promise<unknown | undefined> {
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+  const details = (error as Error & { details?: Record<string, unknown> }).details;
+  if (!details || typeof details.expectedConfirmationToken !== "string") {
+    return undefined;
+  }
+
+  const command = extractCommandFromConfirmationToken(details.expectedConfirmationToken);
+  if (!command) {
+    return undefined;
+  }
+
+  const rl = createInterface({ input, output });
+  try {
+    const answer = await rl.question(`Confirm risky command? ${command} [y/N] `);
+    if (!/^y(es)?$/i.test(answer.trim())) {
+      return {
+        ok: false,
+        action: "cancelled",
+        command,
+      };
+    }
+  } finally {
+    rl.close();
+  }
+
+  return (session.globals.runConfirmed as (command: string) => Promise<string>)(command);
+}
+
+function extractCommandFromConfirmationToken(token: string): string | undefined {
+  if (!token.startsWith("confirm:")) {
+    return undefined;
+  }
+  const command = token.slice("confirm:".length).trim();
+  return command || undefined;
 }
 
 async function handleSlashCommand(session: WorkbenchSession, inputLine: string): Promise<unknown | "exit"> {
@@ -156,7 +225,9 @@ async function handleSlashCommand(session: WorkbenchSession, inputLine: string):
         "/help",
         "/globals",
         "/session",
-        "/repo <path>",
+        "/repos",
+        "/repo <path-or-name>",
+        "/save-repo <name> [path]",
         "/save <name>",
         "/load <name>",
         "/audit [limit]",
@@ -171,12 +242,23 @@ async function handleSlashCommand(session: WorkbenchSession, inputLine: string):
         historyCount: session.state.history.length,
         loadedBootstraps: [...session.state.loadedBootstraps],
       };
+    case "repos":
+      return listRegisteredRepos();
     case "repo": {
-      const repoPath = inputLine.slice(inputLine.indexOf(command) + command.length).trim();
-      if (!repoPath) {
-        throw new Error("/repo requires a path");
+      const repoInput = inputLine.slice(inputLine.indexOf(command) + command.length).trim();
+      if (!repoInput) {
+        throw new Error("/repo requires a path or registered name");
       }
-      return (session.globals.setRepo as (repoPath: string) => Promise<unknown>)(repoPath);
+      const resolved = await resolveRegisteredRepo(repoInput).catch(() => repoInput);
+      return (session.globals.setRepo as (repoPath: string) => Promise<unknown>)(resolved);
+    }
+    case "save-repo": {
+      const name = rest[0];
+      const repoPath = rest.slice(1).join(" ").trim() || session.state.repo || session.state.cwd;
+      if (!name) {
+        throw new Error("/save-repo requires a name");
+      }
+      return saveRegisteredRepo(name, repoPath);
     }
     case "save": {
       const name = rest.join(" ").trim();
@@ -253,7 +335,11 @@ function renderResult(result: unknown): string | undefined {
     return entries
       .map((entry) => {
         const status = entry.ok ? "ok" : `error:${entry.error?.code ?? "unknown"}`;
-        return `${entry.at} ${entry.tool} ${status} ${formatAuditArgs(entry.args)}`.trim();
+        const policy = entry.policyDecision ? ` policy:${entry.policyDecision}` : "";
+        const confirmation = entry.policyDecision === "confirm"
+          ? ` confirmed:${entry.confirmationSatisfied ? "yes" : "no"}`
+          : "";
+        return `${entry.at} ${entry.tool} ${status}${policy}${confirmation} ${formatAuditArgs(entry.args)}`.trim();
       })
       .join("\n");
   }
@@ -261,6 +347,14 @@ function renderResult(result: unknown): string | undefined {
   if (isSessionActionResult(result)) {
     const pathText = typeof result.path === "string" ? ` -> ${result.path}` : "";
     return `${result.action} session '${result.name}'${pathText}\nrepo: ${result.repo ?? "(none)"}\nhistory: ${result.historyCount}`;
+  }
+
+  if (isRepoEntry(result)) {
+    return `repo '${result.name}' -> ${result.path}`;
+  }
+
+  if (isCancelledAction(result)) {
+    return `Cancelled risky command: ${result.command}`;
   }
 
   return undefined;
@@ -294,6 +388,14 @@ function isSessionActionResult(value: unknown): value is {
     && typeof (value as { historyCount?: unknown }).historyCount === "number";
 }
 
+function isRepoEntry(value: unknown): value is { name: string; path: string } {
+  return typeof value === "object" && value !== null && typeof (value as { name?: unknown }).name === "string" && typeof (value as { path?: unknown }).path === "string";
+}
+
+function isCancelledAction(value: unknown): value is { action: "cancelled"; command: string } {
+  return typeof value === "object" && value !== null && (value as { action?: unknown }).action === "cancelled" && typeof (value as { command?: unknown }).command === "string";
+}
+
 function parseArgs(args: string[]): {
   repoPath?: string;
   evalInput?: string;
@@ -304,6 +406,9 @@ function parseArgs(args: string[]): {
     action: "save" | "load";
     name: string;
   };
+  reposCommand?:
+    | { action: "list" }
+    | { action: "add"; name: string; path: string };
   auditCommand?: {
     limit: number;
   };
@@ -319,6 +424,7 @@ function parseArgs(args: string[]): {
   let proofListRequested = false;
   let proofListDir: string | undefined;
   let sessionCommand: { action: "save" | "load"; name: string } | undefined;
+  let reposCommand: { action: "list" } | { action: "add"; name: string; path: string } | undefined;
   let auditCommand: { limit: number } | undefined;
   let proofOptions: { repoPath: string; outputPath?: string; searchPattern?: string } | undefined;
 
@@ -333,6 +439,23 @@ function parseArgs(args: string[]): {
       hostModulePath = args[index + 1];
       index += 1;
       continue;
+    }
+    if (arg === "repos") {
+      const action = args[index + 1];
+      if (action === "list") {
+        reposCommand = { action: "list" };
+        break;
+      }
+      if (action === "add") {
+        const name = args[index + 2];
+        const repoTarget = args[index + 3];
+        if (!name || !repoTarget) {
+          throw new Error("repos add requires <name> <path>");
+        }
+        reposCommand = { action: "add", name, path: repoTarget };
+        break;
+      }
+      throw new Error("repos requires 'list' or 'add <name> <path>'");
     }
     if (arg === "sessions") {
       const action = args[index + 1];
@@ -401,5 +524,5 @@ function parseArgs(args: string[]): {
     }
   }
 
-  return { repoPath, evalInput, hostModulePath, proofListRequested, proofListDir, sessionCommand, auditCommand, proofOptions };
+  return { repoPath, evalInput, hostModulePath, proofListRequested, proofListDir, sessionCommand, reposCommand, auditCommand, proofOptions };
 }

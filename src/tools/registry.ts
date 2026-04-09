@@ -50,6 +50,9 @@ export class ToolRegistry {
       durationMs: result.meta?.durationMs,
       error: result.error,
       result: summarizeValue(result.data),
+      policyDecision: result.meta?.policyDecision,
+      policyReason: result.meta?.policyReason,
+      confirmationSatisfied: result.meta?.confirmationSatisfied,
     };
 
     try {
@@ -86,6 +89,10 @@ function summarizeValue(value: unknown, depth = 0): unknown {
     for (const [key, entry] of Object.entries(record).slice(0, 12)) {
       if (key === "contents" && typeof entry === "string") {
         summary[key] = `<redacted:${entry.length} chars>`;
+        continue;
+      }
+      if (key === "confirmationToken" && typeof entry === "string") {
+        summary[key] = "<provided>";
         continue;
       }
       summary[key] = summarizeValue(entry, depth + 1);

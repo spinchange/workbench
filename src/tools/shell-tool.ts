@@ -1,22 +1,46 @@
-import type { HostShellRunner, ShellArgs, ShellData, ToolResult } from "../types/index.js";
+import type { HostShellRunner, ShellArgs, ShellData, ShellPolicyDecision, ToolError, ToolResult } from "../types/index.js";
 import type { Tool } from "./registry.js";
+
+interface ShellPolicyAssessment {
+  decision: ShellPolicyDecision;
+  reason?: string;
+  expectedConfirmationToken?: string;
+}
 
 export class ShellTool implements Tool<ShellArgs, ShellData> {
   constructor(private readonly runner: HostShellRunner) {}
 
   async execute(args: ShellArgs): Promise<ToolResult<ShellData>> {
     const started = Date.now();
-    const blockedReason = getBlockedShellCommandReason(args);
+    const assessment = assessShellCommand(args.command);
 
-    if (blockedReason) {
+    if (assessment.decision === "blocked") {
       return {
         ok: false,
-        error: {
-          code: "destructive_command_blocked",
-          message: blockedReason,
+        error: buildPolicyError("destructive_command_blocked", assessment, args.command),
+        meta: {
+          durationMs: Date.now() - started,
+          policyDecision: assessment.decision,
+          policyReason: assessment.reason,
+          confirmationSatisfied: false,
         },
-        meta: { durationMs: Date.now() - started },
       };
+    }
+
+    if (assessment.decision === "confirm") {
+      const confirmed = Boolean(args.allowDestructive) && args.confirmationToken === assessment.expectedConfirmationToken;
+      if (!confirmed) {
+        return {
+          ok: false,
+          error: buildPolicyError("confirmation_required", assessment, args.command),
+          meta: {
+            durationMs: Date.now() - started,
+            policyDecision: assessment.decision,
+            policyReason: assessment.reason,
+            confirmationSatisfied: false,
+          },
+        };
+      }
     }
 
     try {
@@ -24,7 +48,12 @@ export class ShellTool implements Tool<ShellArgs, ShellData> {
       return {
         ok: true,
         data,
-        meta: { durationMs: Date.now() - started },
+        meta: {
+          durationMs: Date.now() - started,
+          policyDecision: assessment.decision,
+          policyReason: assessment.reason,
+          confirmationSatisfied: assessment.decision === "confirm",
+        },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -34,7 +63,12 @@ export class ShellTool implements Tool<ShellArgs, ShellData> {
           code: "shell_failed",
           message,
         },
-        meta: { durationMs: Date.now() - started },
+        meta: {
+          durationMs: Date.now() - started,
+          policyDecision: assessment.decision,
+          policyReason: assessment.reason,
+          confirmationSatisfied: assessment.decision === "confirm",
+        },
       };
     }
   }
@@ -46,29 +80,63 @@ export function unavailableShellRunner(message = "No host shell runner is config
   };
 }
 
-function getBlockedShellCommandReason(args: ShellArgs): string | undefined {
-  if (args.allowDestructive) {
-    return undefined;
-  }
-
-  const command = args.command.trim();
-  if (!command) {
-    return undefined;
-  }
-
-  if (isPipeToShellCommand(command)) {
-    return `Blocked risky shell pipeline: ${args.command}. Pass allowDestructive: true to bypass this guard.`;
-  }
-
-  const risk = getCommandRisk(command);
-  if (!risk) {
-    return undefined;
-  }
-
-  return `Blocked ${risk} shell command: ${args.command}. Pass allowDestructive: true to bypass this guard.`;
+export function createShellConfirmationToken(command: string): string {
+  return `confirm:${command.trim().replace(/\s+/g, " ")}`;
 }
 
-function getCommandRisk(command: string): string | undefined {
+function buildPolicyError(code: "destructive_command_blocked" | "confirmation_required", assessment: ShellPolicyAssessment, command: string): ToolError {
+  if (code === "confirmation_required") {
+    return {
+      code,
+      message: `Confirmation required for ${assessment.reason ?? "risky"} shell command: ${command}. Rerun with allowDestructive: true and confirmationToken: \"${assessment.expectedConfirmationToken}\".`,
+      details: {
+        expectedConfirmationToken: assessment.expectedConfirmationToken,
+        policyDecision: assessment.decision,
+        policyReason: assessment.reason,
+      },
+    };
+  }
+
+  return {
+    code,
+    message: `Blocked ${assessment.reason ?? "risky"} shell command: ${command}.`,
+    details: {
+      policyDecision: assessment.decision,
+      policyReason: assessment.reason,
+    },
+  };
+}
+
+function assessShellCommand(command: string): ShellPolicyAssessment {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return { decision: "safe" };
+  }
+
+  if (isPipeToShellCommand(trimmed)) {
+    return { decision: "blocked", reason: "risky shell pipeline" };
+  }
+
+  const risk = getCommandRisk(trimmed);
+  if (!risk) {
+    return { decision: "safe" };
+  }
+
+  if (risk.level === "confirm") {
+    return {
+      decision: "confirm",
+      reason: risk.reason,
+      expectedConfirmationToken: createShellConfirmationToken(trimmed),
+    };
+  }
+
+  return {
+    decision: "blocked",
+    reason: risk.reason,
+  };
+}
+
+function getCommandRisk(command: string): { level: "confirm" | "blocked"; reason: string } | undefined {
   const segments = splitShellSegments(command);
   for (const segment of segments) {
     const tokens = tokenizeShellSegment(segment);
@@ -78,19 +146,19 @@ function getCommandRisk(command: string): string | undefined {
     }
 
     if (isDynamicEvaluationCommand(normalizedTokens)) {
-      return "dynamic-evaluation";
+      return { level: "blocked", reason: "dynamic-evaluation" };
     }
 
-    if (isDirectlyDestructiveCommand(normalizedTokens)) {
-      return "destructive";
+    if (isBlockedSystemLevelCommand(normalizedTokens)) {
+      return { level: "blocked", reason: "system-level" };
     }
 
-    if (isDestructiveGitCommand(normalizedTokens)) {
-      return "destructive git";
+    if (isConfirmDestructiveCommand(normalizedTokens)) {
+      return { level: "confirm", reason: "destructive" };
     }
 
-    if (isSystemLevelRiskCommand(normalizedTokens)) {
-      return "system-level";
+    if (isConfirmDestructiveGitCommand(normalizedTokens)) {
+      return { level: "confirm", reason: "destructive git" };
     }
   }
 
@@ -163,26 +231,12 @@ function isDynamicEvaluationCommand(tokens: string[]): boolean {
   return ["iex", "invoke-expression", "eval"].includes(tokens[0]);
 }
 
-function isDirectlyDestructiveCommand(tokens: string[]): boolean {
+function isConfirmDestructiveCommand(tokens: string[]): boolean {
   const first = tokens[0];
-  return [
-    "rm",
-    "rmdir",
-    "del",
-    "erase",
-    "remove-item",
-    "move",
-    "move-item",
-    "mv",
-    "format",
-    "diskpart",
-    "shutdown",
-    "restart-computer",
-    "stop-computer",
-  ].includes(first);
+  return ["rm", "rmdir", "del", "erase", "remove-item", "move", "move-item", "mv"].includes(first);
 }
 
-function isDestructiveGitCommand(tokens: string[]): boolean {
+function isConfirmDestructiveGitCommand(tokens: string[]): boolean {
   if (tokens[0] !== "git" || tokens.length < 2) {
     return false;
   }
@@ -217,8 +271,13 @@ function isDestructiveGitCommand(tokens: string[]): boolean {
   return false;
 }
 
-function isSystemLevelRiskCommand(tokens: string[]): boolean {
-  return ["sc", "reg"].includes(tokens[0]) && tokens.some((token) => ["delete", "remove"].includes(token));
+function isBlockedSystemLevelCommand(tokens: string[]): boolean {
+  const first = tokens[0];
+  if (["format", "diskpart", "shutdown", "restart-computer", "stop-computer"].includes(first)) {
+    return true;
+  }
+
+  return ["sc", "reg"].includes(first) && tokens.some((token) => ["delete", "remove"].includes(token));
 }
 
 function normalizeCommandToken(token: string): string {

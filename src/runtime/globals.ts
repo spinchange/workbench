@@ -2,6 +2,8 @@ import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import type { WorkbenchSession } from "./session.js";
 import type { FsArgs, FsData, ShellArgs, ShellData, ToolResult, WorkspaceInfo } from "../types/index.js";
+import { createShellConfirmationToken } from "../tools/shell-tool.js";
+import { listRegisteredRepos, resolveRegisteredRepo, saveRegisteredRepo, toProjectPath } from "../workspace/repo-registry.js";
 import { detectWorkspace } from "../workspace/detect-workspace.js";
 
 async function fileExistsFallback(target: string): Promise<boolean> {
@@ -87,12 +89,24 @@ export async function installBuiltinGlobals(session: WorkbenchSession): Promise<
   session.setGlobal("cwd", session.state.cwd);
   session.setGlobal("repo", session.state.repo ?? null);
 
-  session.setGlobal("setRepo", async (repoPath: string) => {
-    workspace = await detectWorkspace(repoPath);
-    session.state.repo = repoPath;
-    session.setGlobal("repo", repoPath);
-    session.setGlobal("wb", { cwd: session.state.cwd, repo: repoPath, workspace });
+  session.setGlobal("setRepo", async (repoInput: string) => {
+    const resolvedRepoPath = await resolveRegisteredRepo(repoInput).catch(() => path.resolve(repoInput));
+    workspace = await detectWorkspace(resolvedRepoPath);
+    session.state.repo = resolvedRepoPath;
+    session.setGlobal("repo", resolvedRepoPath);
+    session.setGlobal("wb", { cwd: session.state.cwd, repo: resolvedRepoPath, workspace });
     return workspace;
+  });
+
+  session.setGlobal("registerRepo", async (name: string, repoPath = session.state.repo ?? session.state.cwd) => {
+    return saveRegisteredRepo(name, repoPath);
+  });
+
+  session.setGlobal("listRepos", async () => listRegisteredRepos());
+
+  session.setGlobal("projectPath", (...segments: string[]) => {
+    const repoPath = session.state.repo ?? session.state.cwd;
+    return toProjectPath(repoPath, ...segments);
   });
 
   session.setGlobal("run", async (command: string, cwd = session.state.repo ?? session.state.cwd, timeoutMs = 20_000) => {
@@ -103,6 +117,24 @@ export async function installBuiltinGlobals(session: WorkbenchSession): Promise<
     });
     return unwrapShell(result);
   });
+
+  session.setGlobal("runConfirmed", async (
+    command: string,
+    cwd = session.state.repo ?? session.state.cwd,
+    timeoutMs = 20_000,
+    confirmationToken = createShellConfirmationToken(command),
+  ) => {
+    const result = await registry.execute<ShellArgs, ShellData>("shell", {
+      command,
+      cwd,
+      timeoutMs,
+      allowDestructive: true,
+      confirmationToken,
+    });
+    return unwrapShell(result);
+  });
+
+  session.setGlobal("confirmationToken", (command: string) => createShellConfirmationToken(command));
 
   session.setGlobal("read", async (target: string) => fsReadText(session, target));
   session.setGlobal("json", async (target: string) => fsReadJson(session, target));
@@ -269,7 +301,12 @@ export async function installBuiltinGlobals(session: WorkbenchSession): Promise<
     cwd: session.state.cwd,
     helpers: [
       "setRepo",
+      "registerRepo",
+      "listRepos",
+      "projectPath",
       "run",
+      "runConfirmed",
+      "confirmationToken",
       "read",
       "json",
       "exists",
