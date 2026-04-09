@@ -1,4 +1,4 @@
-import type { SessionState } from "../types/index.js";
+import type { SessionSnapshot, SessionState } from "../types/index.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { installBuiltinGlobals } from "./globals.js";
 import { SessionEvaluator } from "./evaluator.js";
@@ -32,6 +32,33 @@ export class WorkbenchSession {
 
   remember(input: string): void {
     this.state.history.push(input);
+  }
+
+  createSnapshot(): SessionSnapshot {
+    return {
+      version: 1,
+      cwd: this.state.cwd,
+      repo: this.state.repo,
+      history: [...this.state.history],
+    };
+  }
+
+  applySnapshot(snapshot: SessionSnapshot): void {
+    if (snapshot.version !== 1) {
+      throw new Error(`Unsupported session snapshot version: ${snapshot.version}`);
+    }
+
+    this.state.cwd = snapshot.cwd;
+    this.state.repo = snapshot.repo;
+    this.state.history = [...snapshot.history];
+    this.state.loadedBootstraps = [];
+    this.setGlobal("cwd", snapshot.cwd);
+    this.setGlobal("repo", snapshot.repo ?? null);
+    this.setGlobal("wb", {
+      cwd: snapshot.cwd,
+      repo: snapshot.repo ?? null,
+      workspace: undefined,
+    });
   }
 
   setGlobal(name: string, value: unknown): void {
