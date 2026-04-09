@@ -1,117 +1,103 @@
 # Implementation Checklist
 
-## v0.1
+This checklist reflects the repo as it exists after the current four-slice implementation pass.
 
-- [ ] Scaffold CLI entrypoint
-- [ ] Implement persistent session runtime
-- [ ] Implement typed tool registry
-- [ ] Implement shell tool with structured results
-- [ ] Implement fs tool wrappers needed by helpers
-- [ ] Implement basic workspace detection
-- [ ] Implement helper globals
-- [ ] Implement `setRepo()`
-- [ ] Implement `gitStatus()`
-- [ ] Implement `npmScript()` and `npmTest()`
-- [ ] Implement `preflight()`
-- [ ] Implement `summarizeStatus()`
-- [ ] Implement `repoAudit()`
-- [ ] Implement `testOrExplain()`
-- [ ] Implement user-global bootstrap loading
-- [ ] Implement repo-local bootstrap loading
-- [ ] Add minimal permissions checks for destructive operations
-- [ ] Add unit tests for summary and decision logic
-- [ ] Add one fixture-backed end-to-end test
+## Shipped In Repo
 
-## v0.2
+- [x] CLI entrypoint
+- [x] Persistent session runtime
+- [x] Typed tool registry
+- [x] Shell tool with structured results
+- [x] First-class fs tool seam for common helper and proof operations
+- [x] Basic workspace detection
+- [x] Helper globals
+- [x] `setRepo()`
+- [x] `gitStatus()`
+- [x] `npmScript()` and `npmTest()`
+- [x] `preflight()`
+- [x] `summarizeStatus()`
+- [x] `repoAudit()`
+- [x] `testOrExplain()`
+- [x] User-global bootstrap loading
+- [x] Repo-local bootstrap loading
+- [x] Named session save/load and history persistence
+- [x] Minimal structured output rendering for session and audit flows
+- [x] Slash commands in the REPL
+- [x] Audit log for tool calls
+- [x] Minimal shell execution policy with explicit destructive opt-out
+- [x] Node-based test harness
+- [x] Runtime globals tests
+- [x] Bootstrap tests
+- [x] Session persistence tests
+- [x] Audit log tests
+- [x] Fixture-backed proof-round pass and degraded-path tests
+- [x] Expanded fixture repos
 
-- [ ] Save named sessions
-- [ ] Load named sessions
-- [ ] Persist command history
-- [ ] Add slash commands
-- [ ] Add structured output rendering
-- [ ] Detect package manager
-- [ ] Add repo registry
-- [ ] Add project-relative path helpers
-- [ ] Add audit log for tool calls
-- [ ] Add integration tests at tool seam
-- [ ] Add golden tests for help and summaries
+## Still Missing
 
-## v0.3
-
-- [ ] Plugin API for globals and tools
-- [ ] Workspace policies
-- [ ] Confirmation prompts for risky actions
+- [ ] Repo registry
+- [ ] Project-relative path helpers
+- [ ] Confirmation prompts for risky actions instead of only non-interactive blocking
 - [ ] Multi-repo awareness
-- [ ] Session snapshots
-- [ ] Optional MCP integration seam
+- [ ] Plugin API for globals and tools
 - [ ] TUI polish
-- [ ] Expanded fixture repos
-- [ ] End-to-end coverage for session restore and plugins
+- [ ] Golden tests for user-visible rendering
+- [ ] End-to-end coverage for session restore through the CLI surface
 
-## Slice Plan
+## Remaining Quality Gaps
 
-### Slice 1: Session
+- [ ] Add timeout-specific behavior coverage instead of only generic shell failure coverage
+- [ ] Add invalid-workdir coverage if the runtime grows explicit workdir validation
+- [ ] Decide whether the shell policy should remain lexical or move to a fuller policy model
+- [ ] Reconcile README examples and CLI help text if the command surface expands again
 
-- [ ] open session
-- [ ] evaluate expressions
-- [ ] preserve globals between evaluations
+## Recommended Next Slice
 
-### Slice 2: Shell
+The highest-value next work is now post-v0.1 product hardening:
 
-- [ ] `run()` helper
-- [ ] structured shell result
-- [ ] timeout handling
-- [ ] working directory support
-
-### Slice 3: Repo
-
-- [ ] `setRepo()`
-- [ ] detect `package.json`
-- [ ] detect `.git`
-- [ ] `gitStatus()`
-- [ ] `npmTest()`
-
-### Slice 4: Audit
-
-- [ ] `preflight()`
-- [ ] `summarizeStatus()`
-- [ ] `repoAudit()`
-- [ ] `testOrExplain()`
-
-### Slice 5: Bootstrap
-
-- [ ] load global bootstrap
-- [ ] load repo bootstrap
-- [ ] expose `startSession()`
-
-### Slice 6: Persistence
-
-- [ ] save session
-- [ ] load session
-- [ ] restore repo and history
+- [ ] Add confirmation and policy layers on top of the current shell guard
+- [ ] Add repo registry and project-relative helpers
+- [ ] Add golden tests for CLI and REPL-facing output
+- [ ] Strengthen session restore and audit flows with end-to-end coverage
 
 ## Test Matrix
 
 ### `testOrExplain()`
 
-- [ ] no package.json
-- [ ] package.json without test script
-- [ ] test script passes
-- [ ] test script fails
+- [x] no package.json
+- [x] package.json without test script
+- [x] test script passes
+- [x] test script fails
+- [x] generic shell failure
 - [ ] shell timeout
 - [ ] invalid workdir
 
 ### `summarizeStatus()`
 
-- [ ] clean repo
-- [ ] modified tracked file
-- [ ] untracked file
-- [ ] rename
-- [ ] mixed status
+- [x] modified tracked file
+- [x] untracked file
+- [x] mixed status
+- [x] clean repo
+- [x] rename
 
 ### Bootstrap
 
-- [ ] missing bootstrap file
-- [ ] valid bootstrap file
-- [ ] bootstrap throws
-- [ ] repo-local bootstrap overrides global bootstrap
+- [x] missing bootstrap file
+- [x] valid bootstrap file
+- [x] repo-local bootstrap overrides global bootstrap
+- [x] bootstrap throws
+
+### Proof Round
+
+- [x] clean passing fixture
+- [x] degraded dirty fixture with warning outcome
+
+### Persistence
+
+- [x] snapshot round-trip
+- [x] live session restore from snapshot
+
+### Audit
+
+- [x] audit log file write
+- [x] audit log readback

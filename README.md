@@ -1,16 +1,44 @@
 # Workbench
 
-Workbench is a local-first persistent repo console for coding sessions.
+Workbench is a local-first repo console for coding sessions.
 
-It is not trying to be a full IDE. It is trying to make a coding session feel programmable, durable, and inspectable:
+It is not trying to be a full IDE. The current product shape is:
 
 - a persistent JavaScript session
 - typed local tools
 - repo-aware helpers
 - structured shell and git results
 - repeatable session bootstrap files
+- proof-round artifacts that make an investigation auditable
+- named session snapshots
+- terminal commands for audit inspection and session management
 
-The important architectural constraint is that Workbench should not assume it can spawn child processes directly. Shell execution is a host capability. The session runtime consumes a host-provided shell runner instead of binding itself to Node's `child_process`.
+The important architectural constraint is that Workbench does not spawn child processes directly. Shell execution is a host capability. The runtime consumes a host-provided shell runner instead of binding itself to `child_process`.
+
+## Current State
+
+The repo now has a complete first product slice:
+
+- CLI entrypoint and REPL loop
+- persistent in-process session state for globals and history during a run
+- named session save/load under `~/.workbench/sessions/`
+- workspace detection and helper globals
+- `setRepo()`, `gitStatus()`, `npmScript()`, `npmTest()`, `preflight()`, `summarizeStatus()`, `repoAudit()`, and `testOrExplain()`
+- user-global and repo-local bootstrap loading
+- `workbench proof` artifact generation
+- `workbench proof list` summaries
+- tool-boundary audit logging
+- REPL slash commands and improved CLI result rendering
+- Node-based automated tests for runtime globals, bootstrap loading, proof flow, persistence, audit logging, and shell policy
+
+Still missing from the broader vision:
+
+- repo registry
+- project-relative path helpers
+- multi-repo awareness
+- plugin API for globals and tools
+- TUI polish
+- stronger confirmation policy beyond the current non-interactive shell guard
 
 ## Product Shape
 
@@ -27,48 +55,41 @@ Workbench has five layers:
 5. `ui`
    A terminal-first interaction surface with commands, history, and structured output.
 
-## MVP Goals
-
-The first useful version should do these well:
-
-- open a persistent session in a repo
-- bind the session to a default repo with `setRepo()`
-- run shell commands with structured results
-- inspect repo health with `preflight()`, `summarizeStatus()`, and `repoAudit()`
-- run real project tests with `testOrExplain()`
-- save and load named sessions
-
-## Example User Flow
-
-```ts
-await startSession("C:\\dev\\repos\\dotfiles");
-await gitStatus();
-await repoAudit();
-await testOrExplain();
-```
-
 ## CLI Shape
 
 ```text
 workbench
 workbench --repo C:\path\to\repo
-workbench proof list
 workbench eval "await repoAudit()"
-workbench --host .\dist\host\node-child-process-runner.js proof --repo C:\path\to\repo
+workbench proof --repo C:\path\to\repo
+workbench proof list
 workbench sessions save my-session
 workbench sessions load my-session
-workbench doctor
+workbench audit --limit 20
 ```
+
+## REPL Commands
+
+The REPL now supports slash commands in addition to plain JavaScript:
+
+- `/help`
+- `/globals`
+- `/session`
+- `/repo <path>`
+- `/save <name>`
+- `/load <name>`
+- `/audit [limit]`
+- `/exit`
 
 ## Canonical Proof Round
 
-The first deterministic flow is the `proof` command:
+The deterministic flow is `proof`:
 
 ```text
 workbench --host .\dist\host\node-child-process-runner.js proof --repo C:\path\to\repo --search todo
 ```
 
-It runs one bounded sequence and emits a single JSON artifact:
+It runs one bounded sequence and emits a JSON artifact with:
 
 - workspace detection
 - bootstrap inventory
@@ -79,25 +100,11 @@ It runs one bounded sequence and emits a single JSON artifact:
 - raw shell verification commands like `git status --short`
 - optional targeted search
 
-The artifact includes:
-
-- resolved inputs
-- loaded bootstraps
-- files inspected
-- commands attempted
-- ordered step results
-- findings
-- blockers
-- recommended next action
-- overall status
-
-By default, the artifact is written outside the target repo under `~/.workbench/proof-rounds/` so the proof round does not dirty the repo it is inspecting. You can still pass `--output` explicitly when you want the file somewhere else.
-
-Use `workbench proof list` to summarize the artifacts already written under `~/.workbench/proof-rounds/`.
+Artifacts are written outside the inspected repo by default under `~/.workbench/proof-rounds/`.
 
 ## Runtime Globals
 
-The first built-in globals should be:
+Current built-in globals:
 
 - `wb`
 - `cwd`
@@ -105,7 +112,6 @@ The first built-in globals should be:
 - `setRepo()`
 - `run()`
 - `read()`
-- `write()`
 - `json()`
 - `ls()`
 - `exists()`
@@ -124,25 +130,7 @@ The first built-in globals should be:
 - `testOrExplain()`
 - `replHelp()`
 
-## Seams
-
-The product should stay disciplined about seams:
-
-- runtime vs tools
-- tool interface vs tool implementation
-- workspace detection vs domain logic
-- raw command output vs structured domain objects
-- bootstrap wiring vs helper behavior
-
-Those seams make the codebase sliceable and testable.
-
-### Host-Provided Shell Runner
-
-The shell bridge is intentionally host-driven:
-
-- Workbench runtime asks for shell execution through a typed runner contract.
-- A host environment is responsible for implementing that runner.
-- In a standalone Node build, the shell runner may be unavailable or replaced by an adapter.
+## Host-Provided Shell Runner
 
 Current contract:
 
@@ -151,6 +139,7 @@ export interface ShellArgs {
   command: string;
   cwd?: string;
   timeoutMs?: number;
+  allowDestructive?: boolean;
 }
 
 export interface ShellData {
@@ -163,104 +152,52 @@ export interface ShellData {
 export type HostShellRunner = (args: ShellArgs) => Promise<ShellData>;
 ```
 
-This keeps Workbench compatible with environments where the host already owns execution policy, sandboxing, approvals, or remote tool dispatch.
+Workbench applies a best-effort non-interactive policy before invoking the host runner. It blocks obvious destructive commands, risky pipe-to-shell flows, and dynamic evaluation commands unless `allowDestructive: true` is set explicitly.
 
-Host modules can be loaded explicitly by the CLI:
+## Audit Log
+
+Tool executions can be written to:
+
+- `~/.workbench/audit-log.jsonl`
+
+The CLI surface for inspection is:
 
 ```text
-workbench --host .\examples\mock-shell-host.mjs
-workbench --host .\dist\host\node-child-process-runner.js --repo C:\path\to\repo
+workbench audit --limit 20
 ```
 
-Supported host module exports:
+In a standalone build without a host shell runner, failed shell attempts still appear in the audit log, which makes the execution policy visible rather than silent.
 
-- `createShellRunner()`
-- `shellRunner`
-- default export of type `HostShellRunner`
+## Session Persistence
 
-The included example host at [mock-shell-host.mjs](C:\Users\cduff\workbench\examples\mock-shell-host.mjs) is intentionally fake. It proves the adapter seam without requiring real subprocess execution. The Node child-process host at [node-child-process-runner.ts](C:\Users\cduff\workbench\src\host\node-child-process-runner.ts) is an example of a real host implementation for environments where subprocess execution is allowed.
+Named session snapshots are stored under:
 
-There is also an HTTP-backed host adapter at [http-shell-host.mjs](C:\Users\cduff\workbench\src\host\http-shell-host.mjs) plus companion local host servers:
+- `~/.workbench/sessions/`
 
-- [workbench-shell-host.ps1](C:\Users\cduff\workbench\scripts\workbench-shell-host.ps1)
-- [workbench_shell_host.py](C:\Users\cduff\workbench\scripts\workbench_shell_host.py)
+The persisted snapshot currently includes:
 
-This is the preferred proof path in constrained environments because the Workbench runtime stays pure while the external host owns command execution.
+- `cwd`
+- `repo`
+- `history`
 
-## Running A Proof Round On Another Machine
+This is intentionally conservative. Workbench does not try to serialize arbitrary globals or functions.
 
-1. Copy the `workbench` directory to the other machine.
-2. Install dependencies:
+## Running Tests
 
 ```powershell
-cd C:\path\to\workbench
-npm install
+npm test
 ```
 
-3. Copy [proof-round.config.example.json](C:\Users\cduff\workbench\proof-round.config.example.json) to `proof-round.config.json` and edit the repo paths.
-4. Run:
+This runs:
 
-```powershell
-pwsh -NoProfile -File .\scripts\run-proof-round.ps1
-```
+- main TypeScript typecheck
+- a separate TypeScript compile for `tests/`
+- emitted `node:test` files from `dist-test/tests/`
 
-The runner will:
+## Product Notes
 
-- build Workbench
-- start the external Python shell host
-- run the built-in `workbench proof` command for each configured repo
-- write a JSON report to the configured output path
+The proof loop remains the clearest wedge, but the project now has enough persistence, policy, auditability, and terminal surface area to feel like a real product candidate rather than just a proof harness.
 
-Per-repo proof artifacts generated by the wrapper are written under `~/.workbench/proof-rounds/` so the wrapper does not add proof files inside the repos it is inspecting.
+If the product is going to win, it still needs to become excellent at a narrow job:
 
-You can also override the config from the command line:
-
-```powershell
-pwsh -NoProfile -File .\scripts\run-proof-round.ps1 -Repos @(
-  'C:\path\to\repo1',
-  'C:\path\to\repo2',
-  'C:\path\to\repo3'
-) -InvestigationRepo 'C:\path\to\repo1'
-```
-
-## Test Pattern
-
-Each major feature should follow the same pattern:
-
-1. unit test for pure logic
-2. integration test at the tool seam
-3. fixture-backed end-to-end test
-4. golden test for user-visible rendering when needed
-
-Fixture repos should include:
-
-- `clean-node-repo`
-- `dirty-node-repo`
-- `no-test-script-repo`
-- `non-node-repo`
-
-The first stable proof target now lives at [clean-node-repo](C:/Dev/repos/workbench/examples/fixture-repos/clean-node-repo). Use that fixture when you want to validate the proof loop itself rather than inspect a live repo that is changing under your feet.
-
-The fixture directories are tracked as normal files in this repo. If you want them reinitialized as local git repos for proof runs after clone, run [setup-fixture-repos.ps1](C:/Dev/repos/workbench/scripts/setup-fixture-repos.ps1).
-
-## Security and Guardrails
-
-The MVP should default to local trust, but still include:
-
-- timeouts on shell commands
-- path validation for destructive filesystem operations
-- confirmation policies for dangerous commands
-- audit logging for tool calls
-
-## Bootstrap Model
-
-Recommended bootstrap paths:
-
-- user-global: `~/.workbench/session-start.mjs`
-- repo-local: `<repo>/.workbench/session-start.mjs`
-
-The bootstrap model matters because the product is about session ergonomics as much as execution.
-
-## Development Milestones
-
-See [IMPLEMENTATION-CHECKLIST.md](C:\Users\cduff\workbench\IMPLEMENTATION-CHECKLIST.md) for the build plan.
+- durable repo investigation with repeatable artifacts and host-mediated execution you can trust
